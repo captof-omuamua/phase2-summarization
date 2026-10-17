@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+.ipynb_checkpoints/
+checkpoints/
+*.pth
+*.pt
+*.csv
+!docs/source-map.csv
+*.png
+!docs/figures/*.png
+losses.csv

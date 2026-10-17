@@ -1,0 +1,13 @@
+# Inferred from imports; not a tested or pinned environment.
+torch
+transformers
+pandas
+numpy
+matplotlib
+tqdm
+rouge-score
+nltk
+sacrebleu
+bert-score
+datasets
+sentencepiece
