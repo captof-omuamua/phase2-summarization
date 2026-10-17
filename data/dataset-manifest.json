@@ -1,0 +1,10 @@
+{
+  "file": "news_90k_clean.csv",
+  "rows": 89934,
+  "columns": [
+    "headline",
+    "para"
+  ],
+  "bytes": 129818612,
+  "sha256": "7a09a6250fc7e9d7d5e0082719e9f44f81b9779ea3eeff8ed43ef32e55084464"
+}
