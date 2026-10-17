@@ -1,0 +1,7 @@
+source,destination,source_sha256,change
+model.py,model.py,36dbb100d3fd6a51ab46bd083405dcce3d05caf32dcc4004290ea67ec4641d00,UTF-8 source copy
+train.py,train.py,558240beb739d14c21e3c47d18b46b57d91710bcdc98cdcddd7266ae5cfd4f1c,UTF-8 source copy
+preprocess.py,preprocess.py,dbee2250b3548e4d01445dfafc621fe71a65dd50288e32ffe546d2d20c481dc6,Relative input CSV path
+test.py,test.py,b7e17c434356c9b0818a38d4bfc348286f8f03ca0698245c65ede2f0a4aaf04d,UTF-8 source copy
+evaluate.py,evaluate.py,4e5fc56754222921108b9886c124dc6411e10c9baaec5baa7663e678fae1d8b8,UTF-8 source copy
+turkish mlsum notebook/new.ipynb,experiments/turkish-mlsum.ipynb,c26bafc46877af3ae3f55929e3f65a026ea6041e14e8d9d46f7b4220cf61ffb6,Renamed; execution output/counts and widget metadata cleared
