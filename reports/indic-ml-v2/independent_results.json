@@ -1,0 +1,28 @@
+{
+  "status": "pass",
+  "independent_metric_implementation": "Python Counter ngrams, dynamic-programming LCS, corpus character-ngram F-beta; no project metric functions or ROUGE/chrF libraries imported",
+  "systems": {
+    "transformer": {
+      "examples": 1247,
+      "rouge1": 7.738437735682698,
+      "rouge2": 2.353682441510118,
+      "rougeL": 7.600938716415422,
+      "chrF": 15.567714236185633,
+      "empty_prediction_rate": 0.0
+    },
+    "lead_baseline": {
+      "examples": 1247,
+      "rouge1": 22.068678384273113,
+      "rouge2": 10.203373615768877,
+      "rougeL": 20.998933656895577,
+      "chrF": 34.69510718406984,
+      "empty_prediction_rate": 0.0
+    }
+  },
+  "selected_epoch": 16,
+  "epochs_run": 19,
+  "source_data_protocol_checkpoint_hashes_verified": true,
+  "raw_reference_and_identity_coverage_verified": true,
+  "input_only_baseline_verified": true,
+  "selection_preceded_final_evaluation": true
+}

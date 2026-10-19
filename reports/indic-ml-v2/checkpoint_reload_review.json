@@ -1,0 +1,11 @@
+{
+  "status": "pass",
+  "fresh_process": true,
+  "checkpoint_epoch": 16,
+  "batch_size": 32,
+  "precision": "bfloat16",
+  "device": "NVIDIA GeForce RTX 5090 Laptop GPU",
+  "selected_parameter_count": 8057664,
+  "all_saved_strings_lengths_and_EOS_flags_exactly_reproduced": true,
+  "scope": "First complete saved batch; same selected checkpoint and frozen decoding, no new model selection or tuning."
+}

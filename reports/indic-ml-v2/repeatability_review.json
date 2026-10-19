@@ -1,0 +1,11 @@
+{
+  "status": "pass",
+  "epochs": 19,
+  "selected_epoch": 16,
+  "validation_token_cross_entropy": 5.92214983215777,
+  "all_epoch_losses_token_counts_batches_and_LRs_exactly_equal": true,
+  "selected_state_dict_tensors_exactly_equal": true,
+  "state_dict_entries": 94,
+  "scope": "Two fresh seeded runs on this same recorded environment; not a guarantee across hardware/library versions.",
+  "superseded_v1_test_evaluation_performed": false
+}

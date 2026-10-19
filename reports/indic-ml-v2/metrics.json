@@ -1,0 +1,71 @@
+{
+  "systems": {
+    "transformer": {
+      "examples": 1247,
+      "rouge1": 7.738437735682698,
+      "rouge2": 2.353682441510118,
+      "rougeL": 7.600938716415422,
+      "chrF": 15.567714236185632,
+      "empty_prediction_rate": 0.0
+    },
+    "lead_baseline": {
+      "examples": 1247,
+      "rouge1": 22.068678384273113,
+      "rouge2": 10.203373615768877,
+      "rougeL": 20.998933656895577,
+      "chrF": 34.69510718406984,
+      "empty_prediction_rate": 0.0
+    }
+  },
+  "metric_scale": "0-100",
+  "rouge": "macro F1, NFC Unicode L/M/N runs, case-sensitive, no stemming",
+  "chrF_signature": "nrefs:1|case:mixed|eff:yes|nc:6|nw:0|space:no|version:2.6.0",
+  "sacrebleu_version": "2.6.0",
+  "test_teacher_forced": {
+    "token_cross_entropy": 5.853227759364205,
+    "loss_sum": 140629.65014648438,
+    "target_tokens": 24026,
+    "batches": 39,
+    "seconds": 0.43301229999633506
+  },
+  "selected_epoch": 16,
+  "generation_seconds": 12.213703700021142,
+  "total_evaluation_seconds": 13.715983300004154,
+  "EOS_termination_rate": 0.8556535685645549,
+  "generated_token_lengths": {
+    "min": 4,
+    "mean": 22.811547714514834,
+    "median": 15,
+    "max": 64
+  },
+  "checkpoint_sha256": "d1efd62a0b601034dcb2f1e61f3f015d1fd75b1aa0478ce2973af8104a92a296",
+  "selection_sha256": "b9219ecf0d942d30e19b43d806d20fe1dc3516bf72f150d590146a8d6c014a1f",
+  "prepared_manifest_sha256": "75c2532e946ab68eed357b5671527618128c82e92e5685d0be8e36e202cac1c2",
+  "prediction_file_sha256": "977c7033f6d75025e6f44b5632eea32bd2ae4789e300950c28992e21e9d3237f",
+  "lead_words": 8,
+  "truncation": {
+    "test": {
+      "rows": 1247,
+      "source_truncated": 971,
+      "target_truncated": 0,
+      "source_truncation_rate": 0.7786688051323175,
+      "target_truncation_rate": 0.0
+    },
+    "dev": {
+      "rows": 1176,
+      "source_truncated": 930,
+      "target_truncated": 0,
+      "source_truncation_rate": 0.7908163265306123,
+      "target_truncation_rate": 0.0
+    },
+    "train": {
+      "rows": 7212,
+      "source_truncated": 5621,
+      "target_truncated": 3,
+      "source_truncation_rate": 0.7793954520244037,
+      "target_truncation_rate": 0.00041597337770382697
+    }
+  },
+  "dataset_variant": "AI4Bharat IndicHeadlineGeneration Malayalam v1.0, deduplicated official-split variant",
+  "license": "CC-BY-NC-4.0; noncommercial research; see publisher dataset card"
+}

@@ -12,3 +12,11 @@ checkpoints/
 *.png
 !docs/figures/*.png
 losses.csv
+.pytest_cache/
+outputs/
+prepared/
+*.zip
+*.jsonl
+*.model
+*.vocab
+!reports/**/deterministic_examples.jsonl

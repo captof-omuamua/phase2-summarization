@@ -1,0 +1,10 @@
+{
+  "status": "training_complete",
+  "selected_epoch": 16,
+  "validation_token_cross_entropy": 5.92214983215777,
+  "checkpoint_sha256": "d1efd62a0b601034dcb2f1e61f3f015d1fd75b1aa0478ce2973af8104a92a296",
+  "protocol_sha256": "48040647956ba503d517c3fe14b4ed0a32fe19dfb2d672867d12d2da5fd45716",
+  "selected_before_test_utc": "2026-10-19T03:38:57.173517+00:00",
+  "training_seconds": 143.6141665999894,
+  "test_used": false
+}

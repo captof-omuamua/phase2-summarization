@@ -1,0 +1,86 @@
+{
+  "splits": {
+    "train": {
+      "raw_rows": 10358,
+      "retained_rows": 7212,
+      "excluded_rows": 3146,
+      "duplicate_article_occurrences": 2406,
+      "duplicate_pair_occurrences": 2368,
+      "duplicate_nonempty_url_occurrences": 2267,
+      "article_words": {
+        "min": 100,
+        "median": 126.0,
+        "max": 545
+      },
+      "headline_words": {
+        "min": 2,
+        "median": 9.0,
+        "max": 57
+      },
+      "malayalam_letter_mark_number_fraction": 0.989185022950442,
+      "headline_verbatim_in_article": 0
+    },
+    "dev": {
+      "raw_rows": 5388,
+      "retained_rows": 1176,
+      "excluded_rows": 4212,
+      "duplicate_article_occurrences": 4112,
+      "duplicate_pair_occurrences": 4109,
+      "duplicate_nonempty_url_occurrences": 4107,
+      "article_words": {
+        "min": 100,
+        "median": 124.0,
+        "max": 552
+      },
+      "headline_words": {
+        "min": 2,
+        "median": 9.0,
+        "max": 45
+      },
+      "malayalam_letter_mark_number_fraction": 0.9898938867192114,
+      "headline_verbatim_in_article": 0
+    },
+    "test": {
+      "raw_rows": 5220,
+      "retained_rows": 1247,
+      "excluded_rows": 3973,
+      "duplicate_article_occurrences": 3973,
+      "duplicate_pair_occurrences": 3970,
+      "duplicate_nonempty_url_occurrences": 3967,
+      "article_words": {
+        "min": 100,
+        "median": 125.0,
+        "max": 539
+      },
+      "headline_words": {
+        "min": 2,
+        "median": 9.0,
+        "max": 39
+      },
+      "malayalam_letter_mark_number_fraction": 0.9900541510740907,
+      "headline_verbatim_in_article": 0
+    }
+  },
+  "raw_cross_split_overlap": {
+    "train/dev": {
+      "article_hashes": 397,
+      "nonempty_urls": 372,
+      "headline_hashes_only_descriptive": 428
+    },
+    "train/test": {
+      "article_hashes": 424,
+      "nonempty_urls": 396,
+      "headline_hashes_only_descriptive": 450
+    },
+    "dev/test": {
+      "article_hashes": 100,
+      "nonempty_urls": 92,
+      "headline_hashes_only_descriptive": 108
+    }
+  },
+  "components_with_differing_titles": 40,
+  "retained_article_and_nonempty_url_overlap": 0,
+  "deduplication": "transitive article OR canonical URL components; test>dev>train; lowest composite identity",
+  "normalization": "Unicode NFC and whitespace only; no language/length/content filtering",
+  "limitation": "Exact identity cleanup does not establish event-level or near-duplicate independence"
+}

@@ -1,131 +1,91 @@
-<div align="center">
+# Phase 2 · Malayalam Headline Generation
 
-# Phase 2 · Low-Resource Summarization
+We repaired and reran the Malayalam headline-generation code with improvements to independent Transformer layers, padding and EOS supervision, dataset separation, batched decoding, and Unicode-aware evaluation.
 
-### Exploring Malayalam headline generation and multimodal document summaries.
+The supported experiment trains this repository's **custom encoder–decoder Transformer from scratch** on a deduplicated official-split variant of [AI4Bharat IndicHeadlineGeneration](https://huggingface.co/datasets/ai4bharat/IndicHeadlineGeneration), Malayalam (`ml`). It uses no pretrained model weights. This is a new benchmark experiment, separate from the historical unknown-provenance 89,934-row corpus.
 
-**PyTorch Transformer · Malayalam NLP · January 2025 research proposal**
+## Results
 
-[Project showcase](#project-showcase) · [Implemented model](#implemented-model) · [Research direction](#research-direction) · [Getting started](#getting-started)
+The rerun trained on **7,212 real articles**, selected epoch **16** using **1,176 validation examples**, and evaluated the frozen checkpoint and Lead-8 baseline on all **1,247 retained test examples**.
 
-</div>
+| Method | ROUGE-1 F1 | ROUGE-2 F1 | ROUGE-L F1 | Corpus chrF |
+| --- | ---: | ---: | ---: | ---: |
+| Custom Transformer · greedy | 7.738438 | 2.353682 | 7.600939 | 15.567714 |
+| Lead-8 words baseline | **22.068678** | **10.203374** | **20.998934** | **34.695107** |
 
-This repository brings together the available Phase 2 summarization materials: a **Malayalam news-to-headline Transformer implementation**, a broader **multimodal multi-document summarization proposal**, and early dataset exploration.
+**The Transformer underperforms the simple baseline on every reported overlap metric.** These are newly measured benchmark results, not evidence of improved summary quality or deployment readiness. Synthetic and tiny-overfit tests verify correctness and are not performance results.
 
-The research direction focused on summarization for low-resource Dravidian languages. The recovered code is a narrower, text-only Malayalam experiment; it does not implement every component shown in the proposal diagrams.
+Training stopped after 19 epochs (143.61 seconds). The 8,057,664-parameter model ran on an NVIDIA GeForce RTX 5090 Laptop GPU with CUDA bfloat16 and strict deterministic algorithms. Test teacher-forced token cross-entropy was **5.853228**, reported separately from generated-headline quality. Generation took **12.21 seconds**; 85.565% of predictions terminated with EOS and none were empty. See the [result report and independent checks](reports/indic-ml-v2/README.md), [full-precision metrics](reports/indic-ml-v2/metrics.json), and [frozen protocol](reports/indic-ml-v2/protocol.json).
 
-## Project showcase
+ROUGE-1/2/L are macro F1 using Unicode letter/mark/number tokens with no English stemming; corpus chrF uses character order 6 and beta 2. All reported overlap metrics use a **0–100** scale. Automatic overlap cannot establish factual correctness or fluency; no fluent-language human review is claimed.
 
-### The research vision
+## Methodology
 
-The January 2025 review proposed bringing text, images, and metadata into a common summarization workflow, with external knowledge and iterative feedback. The diagram below is an original proposal figure recovered from the review slides.
+- **Data:** pinned publisher archive, conservatively normalized with Unicode NFC and whitespace only. Digits, Latin names, punctuation and Malayalam combining marks are retained. There is no destructive Malayalam-only filter.
+- **Separation:** build transitive connected components of equal normalized article hashes **or** equal nonempty canonical URLs across all official splits. Retain one representative per component with precedence **test > dev > train**, then lowest stable composite identity. IDs are local to a split and are always stored as `(split,id)`. No random resplitting or score-based reference choice is used.
+- **Used rows:** 7,212 train, 1,176 validation/dev and 1,247 test, from 10,358/5,388/5,220 publisher rows. Exclusions and differing-title duplicate groups are recorded individually. This cleaned single-reference variant is **not directly comparable to unmodified official benchmark scores**. Exact cleanup does not guarantee event-level or near-duplicate independence.
+- **Tokenizer:** 8,000-piece SentencePiece BPE trained on retained **training articles and headlines only**, full character coverage, byte fallback, deterministic order, one tokenizer thread. PAD=0, UNK=1, BOS=2 and EOS=3 are distinct.
+- **Model:** width 256, four heads, three independent encoder layers and three independent decoder layers, feed-forward width 512, dropout 0.1. The original custom attention architecture is preserved; attention capture is optional. Sources use at most 256 subword tokens; headline labels use at most 64 including EOS.
+- **Training:** seed 42; AdamW, learning rate 3e-4, weight decay 0.01, gradient clipping 1.0; batch 32; CUDA bfloat16; maximum 20 epochs. Validation token-weighted cross-entropy selects the best checkpoint; early stopping uses patience 3/minimum improvement 1e-4. ReduceLROnPlateau uses factor 0.5/patience 1. Only padding labels are ignored, so EOS remains supervised.
+- **Generation:** fixed batched greedy decoding, at most 64 new tokens; each sequence stops at its own first EOS. Encoder results are cached. No reference length, reference-selected extract, tuned sampling or alternate decoder selection enters test generation.
+- **Baseline:** the first **8 whitespace words** of the input article. Eight is the rounded median retained training headline length, fixed before evaluation. A baseline winning is a valid outcome.
 
-<p align="center">
-  <img src="docs/figures/proposed-data-flow.png" alt="Original proposed multimodal data flow, including feedback" width="480" />
-</p>
+The 256-token source cap truncates approximately 78% of training/test articles; full split-specific rates are recorded in the prepared manifest. These are headline-generation results from truncated article inputs, not full-document or multimodal summaries. Test teacher-forced cross-entropy is reported separately from generated-headline overlap.
 
-**Proposal figure, not an executed pipeline.** Personal identifiers and slide footers were excluded from the extracted figure.
+## Reproduce
 
-### The implementation available today
-
-The code trains a custom encoder–decoder Transformer to map a Malayalam news paragraph to its headline. It uses the tokenizer associated with `abhinand/malayalam-llama-7b-instruct-v0.1`; it does **not** load or fine-tune that 7B language model.
-
-```mermaid
-flowchart LR
-    CSV[Malayalam paragraphs and headlines] --> Clean[Cleaning and filtering]
-    Clean --> Tokens[Malayalam tokenizer]
-    Tokens --> Encoder[Transformer encoder]
-    Encoder --> Decoder[Autoregressive decoder]
-    Decoder --> Headline[Generated headline]
-    Headline --> Compare[Reference-based evaluation code]
-```
-
-| Available component | What it contains |
-| --- | --- |
-| Preprocessing | Missing-value and duplicate removal; whitespace, URL, and Malayalam-character filtering; length constraints |
-| Transformer | Token embeddings, sinusoidal positions, self-attention, cross-attention, and attention-weight capture |
-| Training | Teacher forcing, AdamW, learning-rate scheduling, early stopping, and best-checkpoint saving |
-| Decoding | Greedy, beam search, top-k, and nucleus sampling; optional extractive preprocessing |
-| Evaluation | ROUGE, BLEU, sacreBLEU, and multilingual BERTScore functions |
-| Exploration | An early Turkish MLSum dataset-loading notebook |
-
-## Implemented model
-
-The training script configures a 256-dimensional hidden representation, four attention heads, three encoder and decoder passes, a 512-dimensional feed-forward layer, and dropout of 0.3. Source articles are capped at 256 tokens; training targets are capped at 64 tokens.
-
-The source reuses the same layer object across the configured passes, so these are shared-parameter repetitions rather than three independently parameterized layers. See [technical notes](docs/TECHNICAL_NOTES.md) before modifying or reproducing the model.
-
-### Data recovered
-
-The local cleaned CSV contains **89,934 records** with `para` and `headline` columns. Its size is approximately **130 MB**. It is excluded from GitHub; [the dataset manifest](data/dataset-manifest.json) records the file size, schema, row count, and SHA-256 fingerprint.
-
-The dataset's collection source and redistribution terms were not established from the available materials. This repository documents the expected input without redistributing the news corpus.
-
-### Results available
-
-No matching trained checkpoint, saved summarization predictions, loss plot, or evaluation-score table was found. The scripts contain code to produce these artifacts, but this archive does not claim reproduced scores or show invented output examples.
-
-The review slides list proposed evaluation measures; figures reported in [literature notes](docs/LITERATURE_NOTES.md) belong to external papers and are not this project's results.
-
-## Research direction
-
-The broader proposal explored recursive Transformer representations, cross-modal attention, graph-based extraction, abstractive generation, knowledge integration, and feedback-based refinement. Its intended language scope covered Tamil, Telugu, and Malayalam.
-
-![Original proposed extractive, abstractive, and feedback pipeline](docs/figures/proposed-summary-pipeline.png)
-
-*Historical design from the review slides. Graph BERTSUM, Q-learning-based BART, and the feedback loop shown here are proposal components; matching implementations were not recovered.*
-
-<details>
-<summary>Original preprocessing design</summary>
-
-![Proposed preprocessing architecture for text, images, and metadata](docs/figures/proposed-preprocessing.png)
-
-This figure illustrates the proposed multimodal architecture, separate from the implemented text-only experiment.
-
-</details>
-
-## Repository layout
+The supported environment uses Python 3.12 and CUDA-enabled PyTorch 2.11.0. Install the appropriate PyTorch wheel explicitly before the remaining pinned dependencies:
 
 ```text
-model.py                    Custom Transformer and attention components
-preprocess.py               Malayalam news cleaning
-train.py                    Training and checkpoint generation
-test.py                     Single-example decoding comparison
-evaluate.py                 Dataset-level decoding and metric code
-requirements.in             Unpinned dependencies inferred from imports
-experiments/
-  turkish-mlsum.ipynb        Early dataset-loading experiment
-data/
-  README.md                 Expected local data files
-  dataset-manifest.json     Metadata for the excluded cleaned CSV
-docs/
-  figures/                  Anonymized proposal diagram extracts
-  PROPOSAL.md               Research scope and evidence mapping
-  TECHNICAL_NOTES.md         Reproduction limitations
-  LITERATURE_NOTES.md        Recovered external-paper reading notes
-  source-map.csv            Source hashes and copy transformations
-```
-
-## Getting started
-
-This is an archived research prototype and is not actively maintained. The environment has not been installed or validated during preparation of this repository.
-
-```bash
 python -m venv .venv
-# Activate the environment for your shell, then:
+# Activate the environment for your shell.
+python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements.in
+python -m pytest -q
 ```
 
-`requirements.in` is an unpinned starting list, not a tested lockfile. A compatible PyTorch/Transformers combination may be needed for the archived APIs. GPU execution is selected when CUDA is available.
+The measured runtime records the exact Python, PyTorch/CUDA/cuDNN, GPU, precision, seeds and deterministic settings. Reproducibility is scoped to the documented environment; bit-identical results across hardware or dependency versions are not promised.
 
-1. Place your cleaned `news_90k_clean.csv` in the repository root, with `para` and `headline` columns. Alternatively, supply `news_90k.csv` and review the cleaning settings before running `python preprocess.py`.
-2. Review [TECHNICAL_NOTES.md](docs/TECHNICAL_NOTES.md), especially the evaluation split and Malayalam metric handling.
-3. Run `python train.py` to train a model. This can require substantial compute and tokenizer downloads.
-4. After a compatible `checkpoints/best_model.pth` exists, run `python test.py` for decoding examples.
-5. Use `python evaluate.py` only after correcting the evaluation data split; the archived script samples from training data.
+Download the [publisher archive at the pinned revision](https://huggingface.co/datasets/ai4bharat/IndicHeadlineGeneration/resolve/d9845634dc0f9cb48d4a26c9f6d8986fb87d2027/data/ml_IndicHeadlineGeneration_v1.0.zip) separately. Its SHA-256 must be `1c371ca6a152238aa6419cb334e70f58d36cd31a1a7a12ef59909ada243fcaa6`. Training/imports never download data or models. From the repository root, use fresh output directories:
 
-## Archive scope
+```text
+python preprocess.py --archive /path/to/ml_IndicHeadlineGeneration_v1.0.zip --output-dir prepared/indic-ml-v1
+python train.py --prepared-dir prepared/indic-ml-v1 --output-dir outputs/train-v1 --device cuda --precision bfloat16
+python evaluate.py --prepared-dir prepared/indic-ml-v1 --run-dir outputs/train-v1 --output-dir outputs/test-v1 --device cuda
+```
 
-Included: five Python scripts, the early Turkish notebook, proposal-diagram extracts, literature notes, and a dataset manifest. The original documents containing team identifiers, unrelated Phase 1 code, routing experiments, environment folders, and large datasets are excluded. Original files remain unchanged.
+An optional training-only compute pilot uses `--pilot-steps 40` and a separate output directory; its weights are discarded. The measured run starts fresh. To resume an interrupted run, repeat the same training command with `--resume outputs/train-v1/last.pt`. Dataset/tokenizer/protocol/source identities must match. Resuming is recorded through the existing checkpoints/history; it is not a new model-selection round.
 
-The only source-path edit replaces a machine-specific preprocessing input path with the relative filename `news_90k.csv`. Notebook execution output and counts were cleared. No training run, checkpoint, or evaluation score was generated for this showcase.
+```text
+python evaluate.py --recompute-predictions outputs/test-v1/test_predictions.jsonl --output-dir outputs/recomputed
+python test.py --prepared-dir prepared/indic-ml-v1 --checkpoint outputs/train-v1/best.pt --article-file article.txt --device cuda
+```
+
+Inference uses the same model, tokenizer, frozen precision and greedy generation path as evaluation. Sources/requirements are snapshotted and hashed before training; checkpoint loading rejects changed dataset/tokenizer/split or source-code hashes. Git attributes preserve LF source/evidence bytes across checkouts.
+
+## Evidence and scope
+
+Preparation writes a per-record retained/excluded manifest, aggregate audit, exact split files, train-only tokenizer, token caches and checksums. Training writes the frozen protocol/source bundle, token-weighted epoch history, resumable last checkpoint, best checkpoint and a selection record **before test evaluation**. Evaluation writes one generated/reference/baseline record for every retained test identity, per-example ROUGE, full aggregate metrics, independent saved-file recomputation, termination/length diagnostics and deterministic examples selected by identity order.
+
+Large corpus-derived files, tokenizer/checkpoint binaries and full predictions stay local/ignored. Small aggregate evidence and deterministic examples may be stored in the private repository with dataset attribution. The historical `data/dataset-manifest.json` describes the earlier excluded corpus only; the new publisher benchmark is documented separately in [data/README.md](data/README.md).
+
+The benchmark is distributed under **CC-BY-NC-4.0** according to the [publisher dataset card](https://huggingface.co/datasets/ai4bharat/IndicHeadlineGeneration); preserve attribution and its noncommercial limitation. See also the [IndicNLG suite](https://indicnlp.ai4bharat.org/indicnlg-suite/). No redistribution rights are asserted for the historical corpus.
+
+## Research proposal and repository
+
+The broader January 2025 proposal explored multimodal, multi-document summaries, external knowledge, graphs and feedback. Those remain proposal components; this implementation is text-only Malayalam article-to-headline generation.
+
+![Original proposed multimodal data flow](docs/figures/proposed-data-flow.png)
+
+![Original proposed extraction, abstraction and feedback pipeline](docs/figures/proposed-summary-pipeline.png)
+
+[Proposal scope](docs/PROPOSAL.md), [technical notes](docs/TECHNICAL_NOTES.md), and [external literature notes](docs/LITERATURE_NOTES.md) retain that historical context. Literature scores are not this project's results. The unrelated Turkish exploration notebook is unchanged.
+
+| File | Purpose |
+| --- | --- |
+| `preprocess.py` | Publisher split audit, transitive duplicate cleanup, training-only tokenizer and caches |
+| `model.py` | Independent custom Transformer layers, boolean masks, EOS-safe generation |
+| `train.py` | Import-safe deterministic training/pilot/resume and validation-only checkpoint selection |
+| `evaluate.py` | Frozen held-out evaluation, Unicode ROUGE, corpus chrF, baseline and saved-file recomputation |
+| `test.py` | Single-article inference through the shared model/decoder |
+| `tests/` | Layer/gradient, masking/EOS, split independence, metric and actual-model integration checks |

@@ -1,0 +1,23 @@
+{
+  "status": "pass",
+  "prepared_manifest_sha256": "75c2532e946ab68eed357b5671527618128c82e92e5685d0be8e36e202cac1c2",
+  "raw_rows": 20966,
+  "retained_counts": {
+    "train": 7212,
+    "dev": 1176,
+    "test": 1247
+  },
+  "components": 9635,
+  "source_groups_reconstructed_independently": true,
+  "training_only_tokenizer_corpus_exact_match": true,
+  "all_artifact_hashes_verified": true,
+  "tokenizer_vocabulary": 8000,
+  "special_ids": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "cached_token_ID_coverage_and_target_shift_verified": true,
+  "test_metrics_computed": false
+}

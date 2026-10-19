@@ -1,0 +1,76 @@
+{
+  "created_utc": "2026-10-19T03:36:33.535650+00:00",
+  "seed": 42,
+  "prepared_manifest_sha256": "75c2532e946ab68eed357b5671527618128c82e92e5685d0be8e36e202cac1c2",
+  "model_config": {
+    "d_model": 256,
+    "nhead": 4,
+    "num_encoder_layers": 3,
+    "num_decoder_layers": 3,
+    "dim_feedforward": 512,
+    "dropout": 0.1,
+    "bos_id": 2,
+    "eos_id": 3,
+    "pad_id": 0,
+    "vocab_size": 8000
+  },
+  "parameter_count": 8057664,
+  "training_rows": 7212,
+  "dev_rows": 1176,
+  "batch_size": 32,
+  "max_epochs": 20,
+  "optimizer": "AdamW",
+  "learning_rate": 0.0003,
+  "weight_decay": 0.01,
+  "gradient_clip_norm": 1.0,
+  "early_stopping": {
+    "patience": 3,
+    "min_improvement": 0.0001
+  },
+  "checkpoint_selection": "lowest validation token-weighted cross-entropy (never test metrics)",
+  "scheduler": {
+    "kind": "ReduceLROnPlateau",
+    "factor": 0.5,
+    "patience": 1
+  },
+  "decoding": {
+    "kind": "batched greedy",
+    "max_new_tokens": 64,
+    "per_example_EOS": true
+  },
+  "metrics": {
+    "rouge": "macro F1; Unicode L/M/N runs; NFC; no stemming; scale0-100",
+    "chrF": {
+      "char_order": 6,
+      "word_order": 0,
+      "beta": 2,
+      "whitespace": false
+    }
+  },
+  "lead_words": 8,
+  "environment": {
+    "python": "3.12.14",
+    "torch": "2.11.0+cu128",
+    "numpy": "2.5.4",
+    "cuda_runtime": "12.8",
+    "cudnn": 91900,
+    "device": "cuda",
+    "device_name": "NVIDIA GeForce RTX 5090 Laptop GPU",
+    "precision": "bfloat16",
+    "deterministic_algorithms": "enabled, warn_only=False",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+    "reproducibility": "Recorded seeds/environment; no bitwise guarantee across hardware/library versions"
+  },
+  "pilot_steps": null,
+  "source_sha256": {
+    "evaluate.py": "b99fcc2f23ebc67a9b503968d4dff2ba068e4f75307911dcb72a37d532523b37",
+    "model.py": "ffe1b42d74a782600a33f556c5331be8999a34f88b43e94f2e8d0b3fb8144f22",
+    "preprocess.py": "feda681ae45c3f138e5af1e30a64357614be936c4d1bf1a4bb88925e295d457c",
+    "test.py": "ff2b4ad220f8d42426803126433d7405c9561e15b64824cb959e819fdb1936ef",
+    "train.py": "839991df58269454aaaa44e9d42337530ead6f11e7e72eb29fb6299aa11b1582",
+    "requirements.in": "80f7ebf39c11dd722ce85f82d368f08d3b08e683dedc749363d46e511556fae5",
+    ".gitattributes": "4a0aabe858ee81c31652f1e55bbd3a033fb1e569359591c93c386d171d4dccc7"
+  }
+}

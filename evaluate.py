@@ -1,371 +1,177 @@
-import os
-import math
+"""Evaluate the frozen checkpoint and Lead-N baseline on the held-out test split."""
+
+import argparse
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import statistics
+import time
+import unicodedata
+
 import torch
-import torch.nn.functional as F
-import pandas as pd
-import re
-from tqdm import tqdm
-from transformers import AutoTokenizer
-from model import TransformerSummarizer
+from torch.utils.data import DataLoader
 from rouge_score import rouge_scorer
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from sacrebleu.metrics import CHRF
 import sacrebleu
-from bert_score import score as bert_score
 
-# -------------------------------
-# Hyperparameters & Paths
-# -------------------------------
-CLEANED_FILE = "news_90k_clean.csv"
-BEST_MODEL_PATH = os.path.join("checkpoints", "best_model.pth")
-EVAL_FRAC = 0.10  # use 10% of data for evaluation
+from preprocess import EOS, Tokenizer, file_hash, read_jsonl, write_json, write_jsonl
+from train import collate_examples, load_model, precision_context, run_epoch, seed_everything
 
-# Decoding constraints
-ENC_MAX_LEN = 256     # maximum tokens for source/extract
-MAX_GEN_LEN = 32      # maximum tokens for generation
-NO_REPEAT_NGRAM_SIZE = 2
-REPETITION_PENALTY = 2.0
 
-# Sampling parameters
-BEAM_SIZE = 3
-TOP_K = 50
-TOP_P = 0.9
-TEMPERATURE = 1.0
+class UnicodeTokenizer:
+    """NFC runs of Unicode letters, combining marks and numbers; case-sensitive."""
+    def tokenize(self, text):
+        tokens, current = [], []
+        for character in unicodedata.normalize("NFC", text):
+            if unicodedata.category(character)[0] in "LMN":
+                current.append(character)
+            elif current:
+                tokens.append("".join(current))
+                current = []
+        if current:
+            tokens.append("".join(current))
+        return tokens
 
-# Model hyperparameters (must match training)
-D_MODEL = 256
-NHEAD = 4
-NUM_ENCODER_LAYERS = 3
-NUM_DECODER_LAYERS = 3
-DIM_FEEDFORWARD = 512
-DROPOUT = 0.3
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def score_predictions(predictions):
+    """Same rule for both systems; all rows count, including empty predictions."""
+    if not predictions:
+        raise ValueError("No predictions to score")
+    if len({row["identity"] for row in predictions}) != len(predictions):
+        raise ValueError("Duplicate prediction identities")
+    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=False, tokenizer=UnicodeTokenizer())
+    chrf = CHRF(char_order=6, word_order=0, beta=2, whitespace=False)
+    aggregate, individual = {}, []
+    for method in ["transformer", "lead_baseline"]:
+        records = []
+        for row in predictions:
+            scores = scorer.score(row["reference"], row[method])
+            values = {metric: float(scores[metric].fmeasure * 100) for metric in scores}
+            individual.append({"identity": row["identity"], "method": method, **values})
+            records.append(values)
+        corpus = chrf.corpus_score([row[method] for row in predictions], [[row["reference"] for row in predictions]])
+        aggregate[method] = {"examples": len(predictions),
+                             **{metric: statistics.mean(row[metric] for row in records) for metric in records[0]},
+                             "chrF": float(corpus.score),
+                             "empty_prediction_rate": sum(not row[method].strip() for row in predictions) / len(predictions)}
+    return {"systems": aggregate, "metric_scale": "0-100", "rouge": "macro F1, NFC Unicode L/M/N runs, case-sensitive, no stemming",
+            "chrF_signature": str(chrf.get_signature()), "sacrebleu_version": sacrebleu.__version__}, individual
 
-# -------------------------------
-# 1) Load Tokenizer & Model
-# -------------------------------
-tokenizer = AutoTokenizer.from_pretrained("abhinand/malayalam-llama-7b-instruct-v0.1")
-tokenizer.pad_token = tokenizer.eos_token
-VOCAB_SIZE = tokenizer.vocab_size
 
-model = TransformerSummarizer(
-    vocab_size=VOCAB_SIZE,
-    d_model=D_MODEL,
-    nhead=NHEAD,
-    num_encoder_layers=NUM_ENCODER_LAYERS,
-    num_decoder_layers=NUM_DECODER_LAYERS,
-    dim_feedforward=DIM_FEEDFORWARD,
-    dropout=DROPOUT,
-    bos_id=tokenizer.bos_token_id,
-    eos_id=tokenizer.eos_token_id,
-    pad_id=tokenizer.pad_token_id
-).to(DEVICE)
+def recompute(prediction_path, output_path):
+    """Re-read persisted generated strings and recompute all aggregate overlaps."""
+    result, _ = score_predictions(read_jsonl(prediction_path))
+    write_json(output_path, result)
+    return result
 
-if not os.path.exists(BEST_MODEL_PATH):
-    raise FileNotFoundError(f"Best model not found at {BEST_MODEL_PATH}")
-model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=DEVICE))
-model.eval()
-print(f"✅ Loaded best model from {BEST_MODEL_PATH}")
 
-# -------------------------------
-# 2) Decoding Methods (Functions)
-# -------------------------------
+def evaluate(prepared_dir, run_dir, output_dir, device_name="cuda", batch_size=32):
+    prepared, run, output = Path(prepared_dir), Path(run_dir), Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    if any(output.iterdir()):
+        raise ValueError("Evaluation output directory must be fresh")
+    selection = json.loads((run / "selection.json").read_text(encoding="utf-8"))
+    protocol = json.loads((run / "protocol.json").read_text(encoding="utf-8"))
+    if selection["checkpoint_sha256"] != file_hash(run / "best.pt"):
+        raise ValueError("Selected checkpoint hash mismatch")
+    if selection["protocol_sha256"] != file_hash(run / "protocol.json"):
+        raise ValueError("Selected protocol hash mismatch")
+    device = torch.device(device_name)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("Requested CUDA GPU is unavailable")
+    seed_everything()
+    torch.set_num_threads(4)
+    model, state, manifest = load_model(run / "best.pt", prepared, device)
+    if state["epoch"] != selection["selected_epoch"] or state["protocol_sha256"] != selection["protocol_sha256"]:
+        raise ValueError("Checkpoint selection metadata mismatch")
+    if protocol["decoding"] != {"kind": "batched greedy", "max_new_tokens": 64, "per_example_EOS": True}:
+        raise ValueError("Unsupported or changed frozen decode protocol")
+    tokenizer = Tokenizer(prepared / "tokenizer.model")
+    sources = read_jsonl(prepared / "test.jsonl")
+    tokens = read_jsonl(prepared / "test_tokens.jsonl")
+    if [r["identity"] for r in sources] != [r["identity"] for r in tokens]:
+        raise ValueError("Test source/token identities do not match")
+    precision = protocol["environment"]["precision"]
+    if precision == "bfloat16" and device.type != "cuda":
+        raise ValueError("Evaluation must preserve the frozen CUDA bfloat16 precision")
+    started = time.perf_counter()
+    predictions = []
+    status = {"status": "running", "started_utc": datetime.now(timezone.utc).isoformat(),
+              "selection_sha256": file_hash(run / "selection.json"), "test_rows": len(sources)}
+    write_json(output / "evaluation_status.json", status)
+    try:
+        model.eval()
+        for start in range(0, len(tokens), batch_size):
+            batch_tokens = tokens[start:start + batch_size]
+            # Generation receives source IDs only; reference text never enters decoding.
+            batch = collate_examples(batch_tokens)
+            source_ids = batch["source"].to(device)
+            with precision_context(device, precision):
+                generated = model.generate_ids(source_ids, max_length=64).cpu().tolist()
+            for row, ids in zip(sources[start:start + batch_size], generated):
+                emitted = ids[1:]
+                terminated = EOS in emitted
+                content_ids = emitted[:emitted.index(EOS)] if terminated else emitted
+                predictions.append({"identity": row["identity"], "source_id": row["source_id"],
+                                    "article_sha256": row["article_sha256"], "url": row["url"],
+                                    "reference": row["headline"], "transformer": tokenizer.decode(content_ids),
+                                    "lead_baseline": " ".join(row["article"].split()[:manifest["lead_words"]]),
+                                    "generated_tokens": len(content_ids), "terminated_with_EOS": terminated})
+            print(f"Decoded {min(start + batch_size, len(tokens))}/{len(tokens)} held-out examples", flush=True)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        generation_seconds = time.perf_counter() - started
+        write_jsonl(output / "test_predictions.jsonl", predictions)
+        scores, individual = score_predictions(predictions)
+        write_jsonl(output / "per_example_metrics.jsonl", individual)
+        reloaded, _ = score_predictions(read_jsonl(output / "test_predictions.jsonl"))
+        if scores != reloaded:
+            raise AssertionError("Persisted prediction metric recomputation differs")
+        write_json(output / "recomputed_metrics.json", reloaded)
+        loader = DataLoader(tokens, batch_size=batch_size, shuffle=False, collate_fn=collate_examples, num_workers=0)
+        teacher_forced = run_epoch(model, loader, device, precision)
+        lengths = [row["generated_tokens"] for row in predictions]
+        scores.update({"test_teacher_forced": teacher_forced, "selected_epoch": selection["selected_epoch"],
+                       "generation_seconds": generation_seconds, "total_evaluation_seconds": time.perf_counter() - started,
+                       "EOS_termination_rate": sum(row["terminated_with_EOS"] for row in predictions) / len(predictions),
+                       "generated_token_lengths": {"min": min(lengths), "mean": statistics.mean(lengths),
+                                                   "median": statistics.median(lengths), "max": max(lengths)},
+                       "checkpoint_sha256": selection["checkpoint_sha256"], "selection_sha256": file_hash(run / "selection.json"),
+                       "prepared_manifest_sha256": file_hash(prepared / "prepared_manifest.json"),
+                       "prediction_file_sha256": file_hash(output / "test_predictions.jsonl"),
+                       "lead_words": manifest["lead_words"], "truncation": manifest["truncation"],
+                       "dataset_variant": manifest["dataset"], "license": manifest["license"]})
+        write_json(output / "metrics.json", scores)
+        # Stable identity order was fixed during preparation, before generation.
+        write_jsonl(output / "deterministic_examples.jsonl", predictions[:5])
+        status.update(status="complete", completed_utc=datetime.now(timezone.utc).isoformat(),
+                      prediction_file_sha256=scores["prediction_file_sha256"])
+        write_json(output / "evaluation_status.json", status)
+        print(json.dumps(scores, ensure_ascii=False, indent=2))
+        return scores
+    except Exception as exc:
+        status.update(status="failed", error_type=type(exc).__name__, error=str(exc))
+        write_json(output / "evaluation_status.json", status)
+        raise
 
-def apply_constraints(logits, tokens, no_repeat_ngram_size, repetition_penalty):
-    # Repetition penalty: penalize tokens already generated.
-    if repetition_penalty != 1.0:
-        for token_id in set(tokens):
-            logits[token_id] /= repetition_penalty
-    # No-repeat n-gram constraint
-    if no_repeat_ngram_size > 0 and len(tokens) >= no_repeat_ngram_size:
-        generated_ngrams = set()
-        for i in range(len(tokens) - no_repeat_ngram_size + 1):
-            ngram_tuple = tuple(tokens[i:i+no_repeat_ngram_size])
-            generated_ngrams.add(ngram_tuple)
-        for idx in range(len(logits)):
-            potential_ngram = tuple(tokens[-(no_repeat_ngram_size-1):] + [idx])
-            if potential_ngram in generated_ngrams:
-                logits[idx] = -float("inf")
-    return logits
 
-def greedy_decode(model, src_ids):
-    model.eval()
-    bos_id = model.bos_id
-    eos_id = model.eos_id
-    pad_id = model.pad_id
-    with torch.no_grad():
-        memory, _ = model.encode(src_ids, src_key_padding_mask=(src_ids == pad_id))
-        generated = [bos_id]
-        for _ in range(MAX_GEN_LEN):
-            tgt = torch.tensor([generated], dtype=torch.long, device=DEVICE)
-            tgt_mask = model._generate_square_subsequent_mask(tgt.size(1)).to(DEVICE)
-            dec_output, _, _ = model.decode(
-                tgt, memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=(tgt == pad_id),
-                memory_key_padding_mask=(src_ids == pad_id)
-            )
-            last_hidden = dec_output[-1, 0, :]
-            logits = model.output_proj(last_hidden)
-            logits = apply_constraints(logits, generated, NO_REPEAT_NGRAM_SIZE, REPETITION_PENALTY)
-            next_token = torch.argmax(logits, dim=-1).item()
-            generated.append(next_token)
-            if next_token == eos_id:
-                break
-    if generated and generated[0] == bos_id:
-        generated = generated[1:]
-    if generated and generated[-1] == eos_id:
-        generated = generated[:-1]
-    return tokenizer.decode(generated, skip_special_tokens=True)
-
-def beam_search_decode(model, src_ids, beam_size=BEAM_SIZE):
-    model.eval()
-    bos_id = model.bos_id
-    eos_id = model.eos_id
-    pad_id = model.pad_id
-    with torch.no_grad():
-        memory, _ = model.encode(src_ids, src_key_padding_mask=(src_ids == pad_id))
-    beams = [([bos_id], 0.0, False)]
-    for _ in range(MAX_GEN_LEN):
-        new_beams = []
-        all_finished = True
-        for tokens, log_prob, finished in beams:
-            if finished:
-                new_beams.append((tokens, log_prob, True))
-                continue
-            all_finished = False
-            tgt = torch.tensor([tokens], dtype=torch.long, device=DEVICE)
-            tgt_mask = model._generate_square_subsequent_mask(tgt.size(1)).to(DEVICE)
-            with torch.no_grad():
-                dec_output, _, _ = model.decode(
-                    tgt, memory,
-                    tgt_mask=tgt_mask,
-                    tgt_key_padding_mask=(tgt == pad_id),
-                    memory_key_padding_mask=(src_ids == pad_id)
-                )
-            last_hidden = dec_output[-1, 0, :]
-            logits = model.output_proj(last_hidden)
-            logits = apply_constraints(logits, tokens, NO_REPEAT_NGRAM_SIZE, REPETITION_PENALTY)
-            probs = F.softmax(logits, dim=-1)
-            topk = torch.topk(probs, beam_size)
-            for prob, token_id in zip(topk.values, topk.indices):
-                new_tokens = tokens + [token_id.item()]
-                new_log_prob = log_prob + math.log(prob.item() + 1e-12)
-                done = (token_id.item() == eos_id)
-                new_beams.append((new_tokens, new_log_prob, done))
-        if all_finished:
-            break
-        beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
-    best_tokens, best_score, _ = sorted(beams, key=lambda x: x[1], reverse=True)[0]
-    if best_tokens and best_tokens[0] == bos_id:
-        best_tokens = best_tokens[1:]
-    if best_tokens and best_tokens[-1] == eos_id:
-        best_tokens = best_tokens[:-1]
-    return tokenizer.decode(best_tokens, skip_special_tokens=True)
-
-def top_k_sampling_decode(model, src_ids, top_k=TOP_K, temperature=TEMPERATURE):
-    model.eval()
-    bos_id = model.bos_id
-    eos_id = model.eos_id
-    pad_id = model.pad_id
-    with torch.no_grad():
-        memory, _ = model.encode(src_ids, src_key_padding_mask=(src_ids == pad_id))
-    generated = [bos_id]
-    for _ in range(MAX_GEN_LEN):
-        tgt = torch.tensor([generated], dtype=torch.long, device=DEVICE)
-        tgt_mask = model._generate_square_subsequent_mask(tgt.size(1)).to(DEVICE)
-        with torch.no_grad():
-            dec_output, _, _ = model.decode(
-                tgt, memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=(tgt == pad_id),
-                memory_key_padding_mask=(src_ids == pad_id)
-            )
-        last_hidden = dec_output[-1, 0, :]
-        logits = model.output_proj(last_hidden)
-        logits = logits / temperature
-        logits = apply_constraints(logits, generated, NO_REPEAT_NGRAM_SIZE, REPETITION_PENALTY)
-        probs = F.softmax(logits, dim=-1)
-        current_top_k = min(top_k, probs.size(-1))
-        topk_vals, topk_inds = torch.topk(probs, current_top_k)
-        topk_probs = topk_vals / torch.sum(topk_vals)
-        chosen_idx = torch.multinomial(topk_probs, 1).item()
-        next_token = topk_inds[chosen_idx].item()
-        generated.append(next_token)
-        if next_token == eos_id:
-            break
-    if generated and generated[0] == bos_id:
-        generated = generated[1:]
-    if generated and generated[-1] == eos_id:
-        generated = generated[:-1]
-    return tokenizer.decode(generated, skip_special_tokens=True)
-
-def nucleus_sampling_decode(model, src_ids, top_p=TOP_P, temperature=TEMPERATURE):
-    model.eval()
-    bos_id = model.bos_id
-    eos_id = model.eos_id
-    pad_id = model.pad_id
-    with torch.no_grad():
-        memory, _ = model.encode(src_ids, src_key_padding_mask=(src_ids == pad_id))
-    generated = [bos_id]
-    for _ in range(MAX_GEN_LEN):
-        tgt = torch.tensor([generated], dtype=torch.long, device=DEVICE)
-        tgt_mask = model._generate_square_subsequent_mask(tgt.size(1)).to(DEVICE)
-        with torch.no_grad():
-            dec_output, _, _ = model.decode(
-                tgt, memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=(tgt == pad_id),
-                memory_key_padding_mask=(src_ids == pad_id)
-            )
-        last_hidden = dec_output[-1, 0, :]
-        logits = model.output_proj(last_hidden)
-        logits = logits / temperature
-        logits = apply_constraints(logits, generated, NO_REPEAT_NGRAM_SIZE, REPETITION_PENALTY)
-        probs = F.softmax(logits, dim=-1)
-        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-        cutoff = (cumulative_probs > top_p).nonzero(as_tuple=True)[0]
-        if len(cutoff) > 0:
-            first_cut = cutoff[0].item()
-            sorted_probs = sorted_probs[:first_cut+1]
-            sorted_indices = sorted_indices[:first_cut+1]
-            sorted_probs = sorted_probs / torch.sum(sorted_probs)
-        chosen_idx = torch.multinomial(sorted_probs, 1).item()
-        next_token = sorted_indices[chosen_idx].item()
-        generated.append(next_token)
-        if next_token == eos_id:
-            break
-    if generated and generated[0] == bos_id:
-        generated = generated[1:]
-    if generated and generated[-1] == eos_id:
-        generated = generated[:-1]
-    return tokenizer.decode(generated, skip_special_tokens=True)
-
-# ------------------------------------------------------
-# 3) Extractive Summarization Functions
-# ------------------------------------------------------
-def extract_summary(paragraph: str, max_words=40):
-    """
-    A simple extractive summarization: splits the paragraph using common Malayalam punctuation 
-    delimiters and selects the longest sentence (or trims to max_words if necessary).
-    """
-    sentence_delimiters = r'[।.!?]'
-    sentences = re.split(sentence_delimiters, paragraph)
-    sentences = [s.strip() for s in sentences if s.strip()]
-    if sentences:
-        longest = max(sentences, key=lambda s: len(s.split()))
-        words = longest.split()
-        if len(words) > max_words:
-            return ' '.join(words[:max_words])
-        return longest
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--prepared-dir", type=Path)
+    parser.add_argument("--run-dir", type=Path)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--recompute-predictions", type=Path)
+    args = parser.parse_args()
+    if args.recompute_predictions:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        recompute(args.recompute_predictions, args.output_dir / "recomputed_metrics.json")
     else:
-        return ' '.join(paragraph.split()[:max_words])
+        if args.prepared_dir is None or args.run_dir is None:
+            parser.error("--prepared-dir and --run-dir are required for model evaluation")
+        evaluate(args.prepared_dir, args.run_dir, args.output_dir, args.device, args.batch_size)
 
-def extractive_abstractive_decode(paragraph: str, decoding_fn):
-    extract = extract_summary(paragraph)
-    print("Extracted Summary for Abstractive Input:\n", extract, "\n")
-    enc_ids = tokenizer.encode(extract, add_special_tokens=False, truncation=True, max_length=ENC_MAX_LEN)
-    enc_tensor = torch.tensor([enc_ids], dtype=torch.long, device=DEVICE)
-    return decoding_fn(model, enc_tensor)
 
-# ------------------------------------------------------
-# 4) Evaluation Metrics Functions
-# ------------------------------------------------------
-def compute_rouge(reference, hypothesis):
-    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
-    scores = scorer.score(reference, hypothesis)
-    return scores['rouge1'].fmeasure, scores['rouge2'].fmeasure, scores['rougeL'].fmeasure
-
-def compute_bleu(reference, hypothesis):
-    # Using NLTK's sentence_bleu with smoothing
-    smoothing_fn = SmoothingFunction().method1
-    # Tokenize by whitespace
-    ref_tokens = reference.split()
-    hyp_tokens = hypothesis.split()
-    bleu_score = sentence_bleu([ref_tokens], hyp_tokens, smoothing_function=smoothing_fn)
-    return bleu_score * 100  # scale to percentage
-
-def compute_indic_bleu(reference, hypothesis):
-    # Using sacreBLEU at sentence level; note that sacreBLEU expects list of references.
-    bleu = sacrebleu.sentence_bleu(hypothesis, [reference]).score
-    return bleu
-
-def compute_bert_score(reference, hypothesis):
-    # Compute BERTScore using a multilingual model (lang "ml" for Malayalam)
-    P, R, F1 = bert_score([hypothesis], [reference], lang="ml", verbose=False)
-    # Return F1 score as a float
-    return F1.item()
-
-# ------------------------------------------------------
-# 5) Evaluation Loop over 10% of Dataset
-# ------------------------------------------------------
-results = []  # list to store evaluation results
-methods = {
-    "Greedy": greedy_decode,
-    "Beam": beam_search_decode,
-    "Top-k": top_k_sampling_decode,
-    "Nucleus": nucleus_sampling_decode,
-    "Extractive+Greedy": lambda model, src: extractive_abstractive_decode(src, greedy_decode),
-    "Extractive+Beam": lambda model, src: extractive_abstractive_decode(src, beam_search_decode),
-    "Extractive+Top-k": lambda model, src: extractive_abstractive_decode(src, top_k_sampling_decode),
-    "Extractive+Nucleus": lambda model, src: extractive_abstractive_decode(src, nucleus_sampling_decode),
-}
-
-# Load evaluation data (10% of the cleaned file)
-if not os.path.exists(CLEANED_FILE):
-    raise FileNotFoundError(f"{CLEANED_FILE} not found!")
-df = pd.read_csv(CLEANED_FILE)
-if df.empty:
-    raise ValueError("Cleaned CSV is empty!")
-eval_df = df.sample(frac=EVAL_FRAC, random_state=42).reset_index(drop=True)
-print(f"Evaluating on {len(eval_df)} samples...")
-
-# Iterate over evaluation samples with a progress bar
-for idx, row in tqdm(eval_df.iterrows(), total=len(eval_df), desc="Evaluating Samples"):
-    paragraph = row["para"]
-    reference = row["headline"]
-    
-    # We'll store one row per method per sample.
-    for method_name, decode_fn in methods.items():
-        # For direct abstractive methods, use the full paragraph
-        # For extractive methods, the function extractive_abstractive_decode will print the extract.
-        try:
-            if "Extractive" in method_name:
-                generated = decode_fn(model, paragraph)
-            else:
-                enc_ids = tokenizer.encode(paragraph, add_special_tokens=False, truncation=True, max_length=ENC_MAX_LEN)
-                enc_tensor = torch.tensor([enc_ids], dtype=torch.long, device=DEVICE)
-                generated = decode_fn(model, enc_tensor)
-        except Exception as e:
-            generated = f"Error: {str(e)}"
-        
-        # Compute metrics
-        rouge1, rouge2, rougel = compute_rouge(reference, generated)
-        bleu = compute_bleu(reference, generated)
-        indic_bleu = compute_indic_bleu(reference, generated)
-        bert = compute_bert_score(reference, generated)
-        
-        results.append({
-            "sample_id": idx,
-            "method": method_name,
-            "reference": reference,
-            "generated": generated,
-            "rouge1": rouge1,
-            "rouge2": rouge2,
-            "rougel": rougel,
-            "bleu": bleu,
-            "indic_bleu": indic_bleu,
-            "indic_bert": bert,
-        })
-
-# Convert results to DataFrame and save to CSV
-results_df = pd.DataFrame(results)
-output_csv = "evaluation_results.csv"
-results_df.to_csv(output_csv, index=False)
-print(f"Evaluation results saved to {output_csv}")
-
-# Optionally, compute average metrics per method and print them
-avg_results = results_df.groupby("method").mean().reset_index()
-print("Average Evaluation Metrics per Method:")
-print(avg_results[["method", "rouge1", "rouge2", "rougel", "bleu", "indic_bleu", "indic_bert"]])
+if __name__ == "__main__":
+    main()

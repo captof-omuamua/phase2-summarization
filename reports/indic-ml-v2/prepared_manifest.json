@@ -1,0 +1,77 @@
+{
+  "dataset": "AI4Bharat IndicHeadlineGeneration Malayalam v1.0, deduplicated official-split variant",
+  "dataset_revision": "d9845634dc0f9cb48d4a26c9f6d8986fb87d2027",
+  "archive_sha256": "1c371ca6a152238aa6419cb334e70f58d36cd31a1a7a12ef59909ada243fcaa6",
+  "archive_bytes": 17015675,
+  "prepared_utc": "2026-10-19T03:27:22.115937+00:00",
+  "archive_url": "https://huggingface.co/datasets/ai4bharat/IndicHeadlineGeneration/resolve/d9845634dc0f9cb48d4a26c9f6d8986fb87d2027/data/ml_IndicHeadlineGeneration_v1.0.zip",
+  "license": "CC-BY-NC-4.0; noncommercial research; see publisher dataset card",
+  "raw_member_sha256": {
+    "ml_train.jsonl": "322bc947551e64796cffeeaec58d8ec213142aa9cfd3d458bcf389e6a69038cd",
+    "ml_dev.jsonl": "51655644cb74b5d23877ed76c8a281378d09fe00d9d800f7acddba72cfa6f2e9",
+    "ml_test.jsonl": "ddb6e66e98b7cf6afb4af25bcef8162e4f38b830b5d8a43023435689402c0ad1"
+  },
+  "raw_member_bytes": {
+    "ml_train.jsonl": 43650853,
+    "ml_dev.jsonl": 22560925,
+    "ml_test.jsonl": 21965245
+  },
+  "tokenizer_settings": {
+    "vocab_size": 8000,
+    "model_type": "bpe",
+    "character_coverage": 1.0,
+    "byte_fallback": true,
+    "pad_id": 0,
+    "unk_id": 1,
+    "bos_id": 2,
+    "eos_id": 3,
+    "normalization_rule_name": "identity",
+    "remove_extra_whitespaces": false,
+    "shuffle_input_sentence": false,
+    "input_sentence_size": 0,
+    "num_threads": 1,
+    "max_sentence_length": 1000000,
+    "hard_vocab_limit": false
+  },
+  "sentencepiece_version": "0.2.2",
+  "vocab_size": 8000,
+  "source_cap": 256,
+  "target_cap": 64,
+  "truncation": {
+    "test": {
+      "rows": 1247,
+      "source_truncated": 971,
+      "target_truncated": 0,
+      "source_truncation_rate": 0.7786688051323175,
+      "target_truncation_rate": 0.0
+    },
+    "dev": {
+      "rows": 1176,
+      "source_truncated": 930,
+      "target_truncated": 0,
+      "source_truncation_rate": 0.7908163265306123,
+      "target_truncation_rate": 0.0
+    },
+    "train": {
+      "rows": 7212,
+      "source_truncated": 5621,
+      "target_truncated": 3,
+      "source_truncation_rate": 0.7793954520244037,
+      "target_truncation_rate": 0.00041597337770382697
+    }
+  },
+  "lead_words": 8,
+  "files": {
+    "data_audit.json": "d8e6f63b8d4efae9b2681730cd4069891ab341d3c44cdaa4ac5bd1a02c0b8c4c",
+    "dev.jsonl": "474ba12d9371ca634da7404c815ac2e55f04561cc66f32900e97f10677f631a2",
+    "dev_tokens.jsonl": "a49ba6fe10d4b605bf27be3b5e5b00cad1156d3b21299d6168b555e392d06135",
+    "record_manifest.jsonl": "fdffee2e67d1d7a2c78b27adaab470c2769a7c258f8f949de4df68718ffdad4d",
+    "test.jsonl": "198c2d2070b8cf82a5574e811c329156e5c1f66bd7ba7f23a87bc3040b86b7c8",
+    "test_tokens.jsonl": "740a05bc3ddb6f680f817a1063c49eb1e52ead9dc6b15cc21224a4e84afc0bea",
+    "tokenizer-training.txt": "f7c41c2ee7557a1293209d16aae470079e4664864eafd390f14df7acc8e192d3",
+    "tokenizer.model": "8ad53f70e31237684823b336391985c70441e90b2d9e519a48f97ddd7a0b9f06",
+    "tokenizer.vocab": "a4cc02b31576c5a5934b05f0208e6c46fa45828d628ecdb7367cf5ffae4de0f0",
+    "train.jsonl": "dc3cda3485b8ae5304bc1bfbba65705078d77da1156562beccd7949547fb5ae8",
+    "train_tokens.jsonl": "c73df8d6d1ce64ac161cb70a419e7f6aa734873cbf7ebeabecba9437a475d816"
+  }
+}

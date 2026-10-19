@@ -1,4 +1,5 @@
 import math
+import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,7 +19,7 @@ class PositionalEncoding(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)  # odd dimensions
         pe = pe.unsqueeze(0)  # (1, max_len, d_model) for broadcasting
         self.register_buffer('pe', pe)
-        
+
     def forward(self, x):
         # x: (batch, seq_len, d_model)
         x = x + self.pe[:, :x.size(1)]
@@ -34,21 +35,21 @@ class CustomTransformerEncoderLayer(nn.Module):
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        
+
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
-        
+
         self.activation = F.relu
 
-    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+    def forward(self, src, src_mask=None, src_key_padding_mask=None, collect_attention=False):
         # src: (seq_len, batch, d_model)
         # Self-attention block
         attn_output, attn_weights = self.self_attn(src, src, src,
                                                    attn_mask=src_mask,
                                                    key_padding_mask=src_key_padding_mask,
-                                                   need_weights=True)
+                                                   need_weights=collect_attention)
         src2 = self.dropout1(attn_output)
         src = self.norm1(src + src2)
         # Feedforward network
@@ -63,15 +64,17 @@ class CustomTransformerEncoder(nn.Module):
     """
     def __init__(self, encoder_layer, num_layers):
         super(CustomTransformerEncoder, self).__init__()
-        self.layers = nn.ModuleList([encoder_layer for _ in range(num_layers)])
+        self.layers = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(num_layers)])
         self.num_layers = num_layers
-        
-    def forward(self, src, mask=None, src_key_padding_mask=None):
+
+    def forward(self, src, mask=None, src_key_padding_mask=None, collect_attention=False):
         output = src
         attn_weights_list = []
         for layer in self.layers:
-            output, attn_weights = layer(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
-            attn_weights_list.append(attn_weights)
+            output, attn_weights = layer(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask,
+                                         collect_attention=collect_attention)
+            if collect_attention:
+                attn_weights_list.append(attn_weights)
         return output, attn_weights_list
 
 class CustomTransformerDecoderLayer(nn.Module):
@@ -86,30 +89,30 @@ class CustomTransformerDecoderLayer(nn.Module):
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        
+
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
-        
+
         self.activation = F.relu
 
     def forward(self, tgt, memory, tgt_mask=None, memory_mask=None,
-                tgt_key_padding_mask=None, memory_key_padding_mask=None):
+                tgt_key_padding_mask=None, memory_key_padding_mask=None, collect_attention=False):
         # tgt: (tgt_len, batch, d_model)
         # Self-attention on target
         self_attn_output, self_attn_weights = self.self_attn(tgt, tgt, tgt,
                                                               attn_mask=tgt_mask,
                                                               key_padding_mask=tgt_key_padding_mask,
-                                                              need_weights=True)
+                                                              need_weights=collect_attention)
         tgt = self.norm1(tgt + self.dropout1(self_attn_output))
         # Cross-attention: query=tgt, key/value=memory
         cross_attn_output, cross_attn_weights = self.cross_attn(tgt, memory, memory,
                                                                 attn_mask=memory_mask,
                                                                 key_padding_mask=memory_key_padding_mask,
-                                                                need_weights=True)
+                                                                need_weights=collect_attention)
         tgt = self.norm2(tgt + self.dropout2(cross_attn_output))
         # Feedforward network
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
@@ -123,11 +126,11 @@ class CustomTransformerDecoder(nn.Module):
     """
     def __init__(self, decoder_layer, num_layers):
         super(CustomTransformerDecoder, self).__init__()
-        self.layers = nn.ModuleList([decoder_layer for _ in range(num_layers)])
+        self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for _ in range(num_layers)])
         self.num_layers = num_layers
-        
+
     def forward(self, tgt, memory, tgt_mask=None, memory_mask=None,
-                tgt_key_padding_mask=None, memory_key_padding_mask=None):
+                tgt_key_padding_mask=None, memory_key_padding_mask=None, collect_attention=False):
         output = tgt
         self_attn_list = []
         cross_attn_list = []
@@ -135,9 +138,11 @@ class CustomTransformerDecoder(nn.Module):
             output, self_attn, cross_attn = layer(output, memory, tgt_mask=tgt_mask,
                                                   memory_mask=memory_mask,
                                                   tgt_key_padding_mask=tgt_key_padding_mask,
-                                                  memory_key_padding_mask=memory_key_padding_mask)
-            self_attn_list.append(self_attn)
-            cross_attn_list.append(cross_attn)
+                                                  memory_key_padding_mask=memory_key_padding_mask,
+                                                  collect_attention=collect_attention)
+            if collect_attention:
+                self_attn_list.append(self_attn)
+                cross_attn_list.append(cross_attn)
         return output, self_attn_list, cross_attn_list
 
 class TransformerSummarizer(nn.Module):
@@ -148,39 +153,42 @@ class TransformerSummarizer(nn.Module):
     def __init__(self, vocab_size, d_model=512, nhead=8,
                  num_encoder_layers=6, num_decoder_layers=6,
                  dim_feedforward=2048, dropout=0.1,
-                 bos_id=1, eos_id=2, pad_id=2):
+                 bos_id=2, eos_id=3, pad_id=0):
         super(TransformerSummarizer, self).__init__()
         self.d_model = d_model
         self.bos_id = bos_id
         self.eos_id = eos_id
         self.pad_id = pad_id
-        
-        self.embedding = nn.Embedding(vocab_size, d_model)
+        if len({bos_id, eos_id, pad_id}) != 3:
+            raise ValueError("PAD, BOS and EOS IDs must be distinct")
+
+        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_encoder = PositionalEncoding(d_model, dropout)
-        
+
         encoder_layer = CustomTransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout)
         self.encoder = CustomTransformerEncoder(encoder_layer, num_encoder_layers)
-        
+
         decoder_layer = CustomTransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout)
         self.decoder = CustomTransformerDecoder(decoder_layer, num_decoder_layers)
-        
+
         self.output_proj = nn.Linear(d_model, vocab_size)
-        
+
         # Dictionary to store attention weights for visualization.
         self.attention_weights = {}
 
-    def encode(self, src, src_mask=None, src_key_padding_mask=None):
+    def encode(self, src, src_mask=None, src_key_padding_mask=None, collect_attention=False):
         # src: (batch, src_len)
         src_emb = self.embedding(src) * math.sqrt(self.d_model)
         src_emb = self.pos_encoder(src_emb)
         # Transformer expects (src_len, batch, d_model)
         src_emb = src_emb.transpose(0, 1)
         memory, enc_attn_weights = self.encoder(src_emb, mask=src_mask,
-                                                src_key_padding_mask=src_key_padding_mask)
+                                                src_key_padding_mask=src_key_padding_mask,
+                                                collect_attention=collect_attention)
         return memory, enc_attn_weights
 
     def decode(self, tgt, memory, tgt_mask=None, memory_mask=None,
-               tgt_key_padding_mask=None, memory_key_padding_mask=None):
+               tgt_key_padding_mask=None, memory_key_padding_mask=None, collect_attention=False):
         # tgt: (batch, tgt_len)
         tgt_emb = self.embedding(tgt) * math.sqrt(self.d_model)
         tgt_emb = self.pos_encoder(tgt_emb)
@@ -189,19 +197,21 @@ class TransformerSummarizer(nn.Module):
                                                              tgt_mask=tgt_mask,
                                                              memory_mask=memory_mask,
                                                              tgt_key_padding_mask=tgt_key_padding_mask,
-                                                             memory_key_padding_mask=memory_key_padding_mask)
+                                                             memory_key_padding_mask=memory_key_padding_mask,
+                                                             collect_attention=collect_attention)
         return output, dec_self_attn, dec_cross_attn
 
     def forward(self, src, tgt, src_mask=None, tgt_mask=None,
                 src_key_padding_mask=None, tgt_key_padding_mask=None,
-                memory_key_padding_mask=None):
+                memory_key_padding_mask=None, collect_attention=False):
         # Encode source
-        memory, enc_attn_weights = self.encode(src, src_mask, src_key_padding_mask)
+        memory, enc_attn_weights = self.encode(src, src_mask, src_key_padding_mask, collect_attention)
         # Decode target
         dec_output, dec_self_attn, dec_cross_attn = self.decode(tgt, memory, tgt_mask,
                                                                 memory_mask=None,
                                                                 tgt_key_padding_mask=tgt_key_padding_mask,
-                                                                memory_key_padding_mask=memory_key_padding_mask)
+                                                                memory_key_padding_mask=memory_key_padding_mask,
+                                                                collect_attention=collect_attention)
         # (tgt_len, batch, d_model) -> (batch, tgt_len, d_model)
         dec_output = dec_output.transpose(0, 1)
         logits = self.output_proj(dec_output)
@@ -213,18 +223,31 @@ class TransformerSummarizer(nn.Module):
         }
         return logits
 
-    def generate(self, src, tokenizer, max_length=32):
+    def generate(self, src, tokenizer, max_length=64):
         """
         Greedy decoding for summarization.
         src: (batch, src_len)
         Returns a list of generated summaries (strings).
         """
+        generated = self.generate_ids(src, max_length=max_length)
+        rows = []
+        for row in generated[:, 1:].tolist():
+            if self.eos_id in row:
+                row = row[:row.index(self.eos_id)]
+            rows.append(row)
+        return tokenizer.batch_decode(rows, skip_special_tokens=True)
+
+    def generate_ids(self, src, max_length=64):
+        """Greedy IDs, including BOS; freeze finished rows with padding after EOS."""
+        if max_length < 1:
+            raise ValueError("max_length must be positive")
         self.eval()
         with torch.no_grad():
             memory, _ = self.encode(src, src_key_padding_mask=(src == self.pad_id))
             batch_size = src.size(0)
             # Start each sequence with the BOS token.
             generated = torch.full((batch_size, 1), self.bos_id, dtype=torch.long, device=src.device)
+            finished = torch.zeros(batch_size, dtype=torch.bool, device=src.device)
             for _ in range(max_length):
                 tgt_mask = self._generate_square_subsequent_mask(generated.size(1)).to(src.device)
                 dec_output, _, _ = self.decode(generated, memory, tgt_mask=tgt_mask,
@@ -232,14 +255,15 @@ class TransformerSummarizer(nn.Module):
                                                memory_key_padding_mask=(src == self.pad_id))
                 dec_output = dec_output.transpose(0, 1)  # (batch, seq_len, d_model)
                 logits = self.output_proj(dec_output[:, -1, :])  # (batch, vocab_size)
+                logits[:, self.pad_id] = -float("inf")
+                logits[:, self.bos_id] = -float("inf")
                 next_tokens = logits.argmax(dim=-1, keepdim=True)
+                next_tokens = torch.where(finished[:, None], self.pad_id, next_tokens)
                 generated = torch.cat([generated, next_tokens], dim=1)
-                if (next_tokens == self.eos_id).all():
+                finished |= next_tokens[:, 0].eq(self.eos_id)
+                if finished.all():
                     break
-            summaries = tokenizer.batch_decode(generated[:, 1:], skip_special_tokens=True)
-            return summaries
+            return generated
 
     def _generate_square_subsequent_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
+        return torch.triu(torch.ones(sz, sz, dtype=torch.bool), diagonal=1)
